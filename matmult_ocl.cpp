@@ -3,12 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DATA_SIZE 10
-#define MEM_SIZE DATA_SIZE * sizeof(float)
-
-#include <stdio.h>
-#include <stdlib.h>
-
 // ----------------------------------------------------------------------------------
 // Speicheranforderung fuer eine leere Matrix A[row][col]. 
 
@@ -95,12 +89,14 @@ void print_mat(float **A, int row, int col, char *tag)
 }
 
 const char *KernelSource =
-"#define DATA_SIZE 10	                                            \n"
-"__kernel void matmult_ocl(__global float *A, __global float *B, __global float *C)  \n"
-"{																	\n"
-"	size_t id = get_global_id(0);									\n"
-"	C[id] = A[id];											  \n"
-"}																	\n"
+"__kernel void matmult_ocl(__global float *A, __global float *B, __global int *d, __global float *C) { \n"
+"	size_t id = get_global_id(0);                                                                      \n"
+"	int shiftA = ((int) id/d[2]) * d[2];                                                               \n"
+"	int shiftB = id%d[3];                                                                              \n"
+"	for(int i=0; i<d[2]; i++) {                                                                        \n"
+"		C[id] += A[shiftA+i] * B[shiftB+i*d[3]];                                                       \n"
+"	}                                                                                                  \n"
+"}                                                                                                     \n"
 "\n";
 
 int main(int argc, char** argv)
@@ -115,8 +111,8 @@ int main(int argc, char** argv)
 	cl_kernel kernel;
 	cl_command_queue command_queue;
 	cl_program program;
-	cl_mem input1, input2, output;
-	float **A, **B, **C;	// matrices
+	cl_mem input1, input2, input3, output;
+	float **A, **B, **C, **serialC;	// matrices
 	int d1, d2, d3;         // dimensions of matrices
 
 							/* print user instruction */
@@ -131,7 +127,8 @@ int main(int argc, char** argv)
 	d1 = atoi(argv[1]);		// rows of A and C
 	d2 = atoi(argv[2]);     // cols of A and rows of B
 	d3 = atoi(argv[3]);     // cols of B and C
-	size_t global[1] = { DATA_SIZE };
+	int d[4] = { 0, d1, d2, d3};
+	size_t global[1] = { (size_t) d1*d3 };
 
 	printf("Matrix sizes C[%d][%d] = A[%d][%d] x B[%d][%d]\n", d1, d3, d1, d2, d2, d3);
 
@@ -141,6 +138,7 @@ int main(int argc, char** argv)
 	B = alloc_mat(d2, d3);
 	init_mat(B, d2, d3);
 	C = alloc_mat(d1, d3);
+	serialC = alloc_mat(d1, d3);
 
 	err = clGetPlatformIDs(0, NULL, &num_of_platforms);
 	if (err != CL_SUCCESS) {
@@ -203,24 +201,28 @@ int main(int argc, char** argv)
 		return 0;
 	}
 
-	input1 = clCreateBuffer(context, CL_MEM_READ_ONLY, MEM_SIZE, NULL, &err);
-	input2 = clCreateBuffer(context, CL_MEM_READ_ONLY, MEM_SIZE, NULL, &err);
-	output = clCreateBuffer(context, CL_MEM_WRITE_ONLY, MEM_SIZE, NULL, &err);
+	input1 = clCreateBuffer(context, CL_MEM_READ_ONLY, d1*d2*sizeof(float), NULL, &err);
+	input2 = clCreateBuffer(context, CL_MEM_READ_ONLY, d2*d3*sizeof(float), NULL, &err);
+	input3 = clCreateBuffer(context, CL_MEM_READ_ONLY, 4 * sizeof(int), NULL, &err);
 
-	clEnqueueWriteBuffer(command_queue, input1, CL_TRUE, 0, MEM_SIZE, *A, 0, NULL, NULL);
-	clEnqueueWriteBuffer(command_queue, input2, CL_TRUE, 0, MEM_SIZE, *B, 0, NULL, NULL);
+	output = clCreateBuffer(context, CL_MEM_WRITE_ONLY, d1*d3*sizeof(float), NULL, &err);
+
+	clEnqueueWriteBuffer(command_queue, input1, CL_TRUE, 0, d1*d2*sizeof(float), *A, 0, NULL, NULL);
+	clEnqueueWriteBuffer(command_queue, input2, CL_TRUE, 0, d2*d3*sizeof(float), *B, 0, NULL, NULL);
+	clEnqueueWriteBuffer(command_queue, input3, CL_TRUE, 0, 4 * sizeof(int), d, 0, NULL, NULL);
 
 	clSetKernelArg(kernel, 0, sizeof(cl_mem), &input1);
 	clSetKernelArg(kernel, 1, sizeof(cl_mem), &input2);
-	clSetKernelArg(kernel, 2, sizeof(cl_mem), &output);
+	clSetKernelArg(kernel, 2, sizeof(cl_mem), &input3);
+	clSetKernelArg(kernel, 3, sizeof(cl_mem), &output);
 
 	clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, global, NULL, 0, NULL, NULL);
 
 	clFinish(command_queue);
 
-	clEnqueueReadBuffer(command_queue, output, CL_TRUE, 0, MEM_SIZE, *C, 0, NULL, NULL);
-	for (unsigned int i = 0; i < DATA_SIZE; i++)
-		printf("%f\n", C[0][i]);
+	clEnqueueReadBuffer(command_queue, output, CL_TRUE, 0, d1*d3*sizeof(float), *C, 0, NULL, NULL);
+	// for (unsigned int i = 0; i < (unsigned int) d1*d3; i++)
+	//	printf("%f\n", C[0][i]);
 
 	clReleaseMemObject(input1);
 	clReleaseMemObject(input2);
@@ -229,6 +231,14 @@ int main(int argc, char** argv)
 	clReleaseKernel(kernel);
 	clReleaseCommandQueue(command_queue);
 	clReleaseContext(context);
+
+	printf("Running serial algorithm...\n");
+	serialC = mult_mat(A, B, d1, d2, d3);
+
+	printf("Checking results... ");
+	is_correct(C, serialC, d1, d3);
+
+	printf("Finishing...\n");
 
 	return 0;
 }
