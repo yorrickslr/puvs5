@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <omp.h>
 
 // ----------------------------------------------------------------------------------
 // Speicheranforderung fuer eine leere Matrix A[row][col]. 
@@ -101,6 +102,7 @@ const char *KernelSource =
 
 int main(int argc, char** argv)
 {
+	float serial_time, openCL_time, start_time;
 	cl_int err;
 	cl_platform_id* platforms = NULL;
 	char platform_name[1024];
@@ -207,6 +209,8 @@ int main(int argc, char** argv)
 
 	output = clCreateBuffer(context, CL_MEM_WRITE_ONLY, d1*d3*sizeof(float), NULL, &err);
 
+	start_time = omp_get_wtime();
+
 	clEnqueueWriteBuffer(command_queue, input1, CL_TRUE, 0, d1*d2*sizeof(float), *A, 0, NULL, NULL);
 	clEnqueueWriteBuffer(command_queue, input2, CL_TRUE, 0, d2*d3*sizeof(float), *B, 0, NULL, NULL);
 	clEnqueueWriteBuffer(command_queue, input3, CL_TRUE, 0, 4 * sizeof(int), d, 0, NULL, NULL);
@@ -224,6 +228,8 @@ int main(int argc, char** argv)
 	// for (unsigned int i = 0; i < (unsigned int) d1*d3; i++)
 	//	printf("%f\n", C[0][i]);
 
+	openCL_time = omp_get_wtime() - start_time;
+
 	clReleaseMemObject(input1);
 	clReleaseMemObject(input2);
 	clReleaseMemObject(output);
@@ -233,12 +239,16 @@ int main(int argc, char** argv)
 	clReleaseContext(context);
 
 	printf("Running serial algorithm...\n");
+	start_time = omp_get_wtime();
 	serialC = mult_mat(A, B, d1, d2, d3);
+	serial_time = omp_get_wtime() - start_time;
 
 	printf("Checking results... ");
 	is_correct(C, serialC, d1, d3);
 
-	printf("Finishing...\n");
-
+	printf("Showing stats...\n");
+	printf("   serial runtime = %f\n", serial_time);
+	printf("   OpenCL runtime = %f\n", openCL_time);
+	printf("   Speedup = %f\n", serial_time / openCL_time);
 	return 0;
 }
