@@ -68,8 +68,11 @@ void is_correct(float **A, float **B, int row, int col)
 
 	for (i = 0; i < row; i++)
 		for (j = 0; j < col; j++)
-			if (A[i][j] != B[i][j])
+			if (A[i][j] != B[i][j]) {
 				printf("error!\n");
+				return;
+			}
+				
 
 	printf("ok.\n");
 }
@@ -232,6 +235,7 @@ int main(int argc, char** argv)
 
 	clReleaseMemObject(input1);
 	clReleaseMemObject(input2);
+	clReleaseMemObject(input3);
 	clReleaseMemObject(output);
 	clReleaseProgram(program);
 	clReleaseKernel(kernel);
